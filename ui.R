@@ -13,6 +13,7 @@ library(psych) # for describeBy
 library(combinat) # for permn
 library(MASS) # for fitdistr
 library(effsize) # for cohen.d
+library(pwr) # pwr.t.test
 
 ########################################### Box Plots
 boxplot(Time ~ Variant_ID, data=df) # Plotting boxplot of Time for both Variants
@@ -142,6 +143,146 @@ t_test_Shampoos_Added <- t.test(Shampoos_Added ~ Variant_ID, data=df, alternativ
 effect_size_test_Time <- (cohen.d(Time ~ Variant_ID, hedges.correction=TRUE, data = df))
 effect_size_test_Shampoos_Added <- (cohen.d(Shampoos_Added ~ Variant_ID, hedges.correction=TRUE, data = df))
 
+########################################## Power analysis
+nsample <- nrow(df)
+nreplications <- 10000
+
+# The power is calculated with the SUBTRACTION of the populations, not with the populations themselves
+dist_null_time <- replicate(nreplications, mean(rnorm(nsample)) - mean(rnorm(nsample)))
+dist_alternate_time <- replicate(nreplications, mean(rnorm(nsample, mean = 0.2)) - mean(rnorm(nsample, mean = 0.2)))
+
+dist_null_shampoos <- replicate(nreplications, mean(rnorm(nsample)) - mean(rnorm(nsample)))
+dist_alternate_shampoos <- replicate(nreplications, mean(rnorm(nsample, mean = 0.2)) - mean(rnorm(nsample, mean = 0.2)))
+
+plot(density(dist_null_time), xlim = c(-1, 1), ylim = c(0, 5), col = "blue", main = "", xlab = "")
+par(new = TRUE)
+plot(density(dist_alternate_time), xlim = c(-1, 1), ylim = c(0, 5), col = "red", main = "", xlab = "")
+
+plot(density(dist_null_shampoos), xlim = c(-1, 1), ylim = c(0, 5), col = "blue", main = "", xlab = "")
+par(new = TRUE)
+plot(density(dist_alternate_shampoos), xlim = c(-1, 1), ylim = c(0, 5), col = "red", main = "", xlab = "")
+
+# Positive 1-tail for Time
+mean_null_time <- fitdistr(dist_null_time, "normal")$estimate[1]
+sd_null_time <- fitdistr(dist_null_time, "normal")$estimate[2]
+critical_value_time <- qnorm(0.95, mean = mean_null_time, sd = sd_null_time)
+abline(v = critical_value_time, col = "green")
+
+mean_alternate_time <- fitdistr(dist_alternate_time, "normal")$estimate[1]
+sd_alternate_time <- fitdistr(dist_alternate_time, "normal")$estimate[2]
+cat("Power for Time:", pnorm(critical_value_time, mean = mean_alternate_time, sd = sd_alternate_time), "\n\n")
+
+# Positive 1-tail for Shampoos_Added
+mean_null_shampoos <- fitdistr(dist_null_shampoos, "normal")$estimate[1]
+sd_null_shampoos <- fitdistr(dist_null_shampoos, "normal")$estimate[2]
+critical_value_shampoos <- qnorm(0.95, mean = mean_null_shampoos, sd = sd_null_shampoos)
+abline(v = critical_value_shampoos, col = "green")
+
+mean_alternate_shampoos <- fitdistr(dist_alternate_shampoos, "normal")$estimate[1]
+sd_alternate_shampoos <- fitdistr(dist_alternate_shampoos, "normal")$estimate[2]
+cat("Power for Shampoos_Added:", pnorm(critical_value_shampoos, mean = mean_alternate_shampoos, sd = sd_alternate_shampoos), "\n\n")
+
+########################################## Sample Size
+delta_time <- 0.2  # effect size for Time variable
+delta_shampoos <- 0.3  # effect size for Shampoos_Added variable
+sigma_time <- 1  # standard deviation for Time variable
+sigma_shampoos <- 1  # standard deviation for Shampoos_Added variable
+alpha <- 0.05
+beta <- 0.2
+
+# Calculate sample size for Time variable
+n_time <- ceiling(((qnorm(1-alpha) + qnorm(1-beta))^2 * (sigma_time^2 + sigma_time^2))/(delta_time^2))
+
+# Calculate sample size for Shampoos_Added variable
+n_shampoos <- ceiling(((qnorm(1-alpha) + qnorm(1-beta))^2 * (sigma_shampoos^2 + sigma_shampoos^2))/(delta_shampoos^2))
+
+cat("Sample size for Time variable (per group): ", n_time, "\n")
+cat("Sample size for Shampoos_Added variable (per group): ", n_shampoos, "\n")
+
+########################################## Power
+# Variable 1
+delta_time <- 1  # effect size for Time variable
+sigma_time <- 5  # standard deviation for Time variable
+es_time <- delta_time / sigma_time
+
+# Variable 2
+delta_shampoos <- 0.5  # effect size for Shampoos_Added variable
+sigma_shampoos <- 2  # standard deviation for Shampoos_Added variable
+es_shampoos <- delta_shampoos / sigma_shampoos
+
+# Calculate power for Variable 1
+power_time <- pwr.t.test(d = es_time, sig.level = 0.05, power = 0.8,
+                         type = "two.sample", alternative = "greater")
+
+# Calculate power for Variable 2
+power_shampoos <- pwr.t.test(d = es_shampoos, sig.level = 0.05, power = 0.8,
+                             type = "two.sample", alternative = "greater")
+
+cat("Power for Time variable:", power_time$power, "\n")
+cat("Power for Shampoos_Added variable:", power_shampoos$power, "\n")
+
+########################################### Power Calculation
+# Variables and effect sizes
+grand_average_time <- mean(df$Time)
+standard_deviation_time <- sd(df$Time)
+grand_average_shampoos <- mean(df$Shampoos_Added)
+standard_deviation_shampoos <- sd(df$Shampoos_Added)
+
+
+effect_time <- function(level) {
+  switch(level, 'a' = 0, 'b' = 1)
+}
+
+effect_shampoos <- function(level) {
+  switch(level, 'a' = 0, 'b' = 0.5)
+}
+
+# The model is: time ~ effect(factor) + N(grand_average, standard_deviation)
+distr_group_a_time <- replicate(nreplications, 
+                                (mean(effect_time('a') + rnorm(nsample, mean = grand_average_time, sd = standard_deviation_time))) -
+                                  (mean(effect_time('a') + rnorm(nsample, mean = grand_average_time, sd = standard_deviation_time))))
+distr_group_b_time <- replicate(nreplications, 
+                                (mean(effect_time('b') + rnorm(nsample, mean = grand_average_time, sd = standard_deviation_time))) -
+                                  (mean(effect_time('a') + rnorm(nsample, mean = grand_average_time, sd = standard_deviation_time))))
+
+distr_group_a_shampoos <- replicate(nreplications, 
+                                    (mean(effect_shampoos('a') + rnorm(nsample, mean = grand_average_shampoos, sd = standard_deviation_shampoos))) -
+                                      (mean(effect_shampoos('a') + rnorm(nsample, mean = grand_average_shampoos, sd = standard_deviation_shampoos))))
+distr_group_b_shampoos <- replicate(nreplications, 
+                                    (mean(effect_shampoos('b') + rnorm(nsample, mean = grand_average_shampoos, sd = standard_deviation_shampoos))) -
+                                      (mean(effect_shampoos('a') + rnorm(nsample, mean = grand_average_shampoos, sd = standard_deviation_shampoos))))
+
+# Plot the distributions
+plot(density(distr_group_a_time), xlim = c(-1, 2), ylim = c(0, 1), col = "blue", main = "", xlab = "")
+par(new=TRUE)
+plot(density(distr_group_b_time), xlim = c(-1, 2), ylim = c(0, 1), col = "red", main = "", xlab = "")
+par(new=TRUE)
+
+plot(density(distr_group_a_shampoos), xlim = c(-1, 2), ylim = c(0, 1), col = "blue", main = "", xlab = "")
+par(new=TRUE)
+plot(density(distr_group_b_shampoos), xlim = c(-1, 2), ylim = c(0, 1), col = "red", main = "", xlab = "")
+par(new=TRUE)
+
+# Power analysis for Time variable
+critical_value_time <- quantile(distr_group_a_time, 0.95)
+abline(v=critical_value_time, col = "green")
+
+beta_time <- length(distr_group_b_time[distr_group_b_time <= critical_value_time]) / length(distr_group_b_time)
+cat("Beta for Time variable:", beta_time, "\n")
+cat(paste("Time - 95% percentile (alpha): ", critical_value <- quantile(distr_group_a_time, 0.95), "\n", sep=''))
+
+# Power analysis for Shampoos_Added variable
+abline(v=critical_value, col = "green")
+
+beta_shampoos <- length(distr_group_b_shampoos[distr_group_b_shampoos <= critical_value_shampoos]) / length(distr_group_b_shampoos)
+cat("Beta for Shampoos_Added variable:", beta_shampoos, "\n")
+cat(paste("Shampoos Added - 95% percentile (alpha): ", critical_value <- quantile(distr_group_a_shampoos, 0.95), "\n", sep=''))
+
+
+########################################### New Power
+
+
+
 ########################################### Run App
 
 ui <- fluidPage(
@@ -155,6 +296,9 @@ ui <- fluidPage(
       p("The aim of the experiment was to investigate whether the inclusion of these labels would improve user experience and task performance on the website.\nThe research question guiding this study was:"),
       strong("Does the provision of additional labels about shampoo products improve the user experience and task performance compared to a version without these labels?"),
       div(
+        br(),
+        strong("Power Analysis"),
+        br(),
         p(paste("Shapiro-Wilk Test - Time (Variant A): p-value =", shapiro_test_time_A$p.value)),
         p(paste("Shapiro-Wilk Test - Time (Variant B): p-value =", shapiro_test_time_B$p.value)),
         br(),
