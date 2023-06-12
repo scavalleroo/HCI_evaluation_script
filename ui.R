@@ -2,7 +2,7 @@
 library(shiny)
 library(rsconnect)
 
-df <- read.csv("dataset.csv", header = TRUE)
+df <- read.csv("dataset.csv", header = TRUE, stringsAsFactors = TRUE)
 
 # Convert Variant_ID to factor
 df$Variant_ID <- as.factor(df$Variant_ID)
@@ -14,6 +14,9 @@ library(combinat) # for permn
 library(MASS) # for fitdistr
 library(effsize) # for cohen.d
 library(pwr) # pwr.t.test
+library(broom)
+library(car)
+library(sjstats) # eta_sq
 
 ########################################### Box Plots
 boxplot(Time ~ Variant_ID, data=df) # Plotting boxplot of Time for both Variants
@@ -143,145 +146,109 @@ t_test_Shampoos_Added <- t.test(Shampoos_Added ~ Variant_ID, data=df, alternativ
 effect_size_test_Time <- (cohen.d(Time ~ Variant_ID, hedges.correction=TRUE, data = df))
 effect_size_test_Shampoos_Added <- (cohen.d(Shampoos_Added ~ Variant_ID, hedges.correction=TRUE, data = df))
 
-########################################## Power analysis
-nsample <- nrow(df)
-nreplications <- 10000
+###########################################
+# Independent samples Wilcoxon
+#wilcox.test(Time ~ Variant_ID, data=df, alternative="greater")
+#wilcox.test(Shampoos_Added ~ Variant_ID, data=df, alternative="greater")
 
-# The power is calculated with the SUBTRACTION of the populations, not with the populations themselves
-dist_null_time <- replicate(nreplications, mean(rnorm(nsample)) - mean(rnorm(nsample)))
-dist_alternate_time <- replicate(nreplications, mean(rnorm(nsample, mean = 0.2)) - mean(rnorm(nsample, mean = 0.2)))
+# Paired
+#wilcox.test(Time ~ Variant_ID, data=df, alternative="greater", paired = TRUE)
+#wilcox.test(Shampoos_Added ~ Variant_ID, data=df, alternative="greater", paired = TRUE)
 
-dist_null_shampoos <- replicate(nreplications, mean(rnorm(nsample)) - mean(rnorm(nsample)))
-dist_alternate_shampoos <- replicate(nreplications, mean(rnorm(nsample, mean = 0.2)) - mean(rnorm(nsample, mean = 0.2)))
+# Kruskal -Wallis
+(fit <- kruskal.test(Time ~ Variant_ID, data=df))
+print(paste("Kruskal -Wallis = ", fit))
+(fit <- kruskal.test(Shampoos_Added ~ Variant_ID, data=df))
+print(paste("Kruskal -Wallis = ", fit))
 
-plot(density(dist_null_time), xlim = c(-1, 1), ylim = c(0, 5), col = "blue", main = "", xlab = "")
-par(new = TRUE)
-plot(density(dist_alternate_time), xlim = c(-1, 1), ylim = c(0, 5), col = "red", main = "", xlab = "")
+# Friedman's test
+# (fit <- friedman.test(Time ~ Variant_ID|Test_Id, data=df))
+# (fit <- friedman.test(Shampoos_Added ~ Variant_ID|Test_Id, data=df))
 
-plot(density(dist_null_shampoos), xlim = c(-1, 1), ylim = c(0, 5), col = "blue", main = "", xlab = "")
-par(new = TRUE)
-plot(density(dist_alternate_shampoos), xlim = c(-1, 1), ylim = c(0, 5), col = "red", main = "", xlab = "")
+# Dunn's test (post-hoc)
+library(dunn.test) # dunn,test
 
-# Positive 1-tail for Time
-mean_null_time <- fitdistr(dist_null_time, "normal")$estimate[1]
-sd_null_time <- fitdistr(dist_null_time, "normal")$estimate[2]
-critical_value_time <- qnorm(0.95, mean = mean_null_time, sd = sd_null_time)
-abline(v = critical_value_time, col = "green")
+dunn.test(df$Time, df$Variant_ID)
+dunn.test(df$Shampoos_Added, df$Variant_ID)
 
-mean_alternate_time <- fitdistr(dist_alternate_time, "normal")$estimate[1]
-sd_alternate_time <- fitdistr(dist_alternate_time, "normal")$estimate[2]
-cat("Power for Time:", pnorm(critical_value_time, mean = mean_alternate_time, sd = sd_alternate_time), "\n\n")
+# Cliff's delta
+cliff.delta(Time ~ Variant_ID, data=df)
+cliff.delta(Shampoos_Added ~ Variant_ID, data=df)
 
-# Positive 1-tail for Shampoos_Added
-mean_null_shampoos <- fitdistr(dist_null_shampoos, "normal")$estimate[1]
-sd_null_shampoos <- fitdistr(dist_null_shampoos, "normal")$estimate[2]
-critical_value_shampoos <- qnorm(0.95, mean = mean_null_shampoos, sd = sd_null_shampoos)
-abline(v = critical_value_shampoos, col = "green")
+# AOV Time
+fit <- aov(Time ~ Variant_ID, data = df)
+summary(fit)
+print(paste("Coefficients = ", fit$coefficients))
 
-mean_alternate_shampoos <- fitdistr(dist_alternate_shampoos, "normal")$estimate[1]
-sd_alternate_shampoos <- fitdistr(dist_alternate_shampoos, "normal")$estimate[2]
-cat("Power for Shampoos_Added:", pnorm(critical_value_shampoos, mean = mean_alternate_shampoos, sd = sd_alternate_shampoos), "\n\n")
+# R squared
+(tidy_fit <- tidy(fit))
+(R_squared <- tidy_fit$sumsq[1] / (tidy_fit$sumsq[1] + tidy_fit$sumsq[2]))
+print(paste("R Squared = ", R_squared))
+# Tukey's test
+# Maybe to Remove
+(comp <- TukeyHSD(fit))
+plot(comp)
 
-########################################## Sample Size
-delta_time <- 0.2  # effect size for Time variable
-delta_shampoos <- 0.3  # effect size for Shampoos_Added variable
-sigma_time <- 1  # standard deviation for Time variable
-sigma_shampoos <- 1  # standard deviation for Shampoos_Added variable
-alpha <- 0.05
-beta <- 0.2
+# ANOVA assumptions 
+# Show diagnostic plots
+plot(fit, which=c(1,2))
 
-# Calculate sample size for Time variable
-n_time <- ceiling(((qnorm(1-alpha) + qnorm(1-beta))^2 * (sigma_time^2 + sigma_time^2))/(delta_time^2))
+# Check normality visually
+mean_resid <- fitdistr(resid(fit), "normal")$estimate[1]
+sd_resid <- fitdistr(resid(fit), "normal")$estimate[2]
+xvalue <- seq(-6, 6, length = 200)
+hist(resid(fit), freq = FALSE)
+lines(xvalue, dnorm(xvalue, mean = mean_resid, sd = sd_resid))
 
-# Calculate sample size for Shampoos_Added variable
-n_shampoos <- ceiling(((qnorm(1-alpha) + qnorm(1-beta))^2 * (sigma_shampoos^2 + sigma_shampoos^2))/(delta_shampoos^2))
+# Diagnostic tests - Normality
+shapiro.test(resid(fit))
+ks.test(resid(fit), "pnorm")
+qqnorm(resid(fit))
+qqline(resid(fit))
 
-cat("Sample size for Time variable (per group): ", n_time, "\n")
-cat("Sample size for Shampoos_Added variable (per group): ", n_shampoos, "\n")
+# Diagnostic tests - Homogeneity of variances
+leveneTest(Time ~ Variant_ID, data=df)
 
-########################################## Power
-# Variable 1
-delta_time <- 1  # effect size for Time variable
-sigma_time <- 5  # standard deviation for Time variable
-es_time <- delta_time / sigma_time
+# Effect Size
+# eta_squared(fit) Deprecated
 
-# Variable 2
-delta_shampoos <- 0.5  # effect size for Shampoos_Added variable
-sigma_shampoos <- 2  # standard deviation for Shampoos_Added variable
-es_shampoos <- delta_shampoos / sigma_shampoos
+# AOV Shampoos Added
+fit <- aov(Shampoos_Added ~ Variant_ID, data = df)
+summary(fit)
+print(paste("Coefficients = ", fit$coefficients))
 
-# Calculate power for Variable 1
-power_time <- pwr.t.test(d = es_time, sig.level = 0.05, power = 0.8,
-                         type = "two.sample", alternative = "greater")
+# R squared
+(tidy_fit <- tidy(fit))
+(R_squared <- tidy_fit$sumsq[1] / (tidy_fit$sumsq[1] + tidy_fit$sumsq[2]))
+print(paste("R Squared = ", R_squared))
+# Tukey's test
+# Maybe to Remove
+(comp <- TukeyHSD(fit))
+print(comp)
+plot(comp)
 
-# Calculate power for Variable 2
-power_shampoos <- pwr.t.test(d = es_shampoos, sig.level = 0.05, power = 0.8,
-                             type = "two.sample", alternative = "greater")
+# ANOVA assumptions
+# Show diagnostic plots
+plot(fit, which=c(1,2))
 
-cat("Power for Time variable:", power_time$power, "\n")
-cat("Power for Shampoos_Added variable:", power_shampoos$power, "\n")
+# Check normality visually
+mean_resid <- fitdistr(resid(fit), "normal")$estimate[1]
+sd_resid <- fitdistr(resid(fit), "normal")$estimate[2]
+xvalue <- seq(-6, 6, length = 200)
+hist(resid(fit), freq = FALSE)
+lines(xvalue, dnorm(xvalue, mean = mean_resid, sd = sd_resid))
 
-########################################### Power Calculation
-# Variables and effect sizes
-grand_average_time <- mean(df$Time)
-standard_deviation_time <- sd(df$Time)
-grand_average_shampoos <- mean(df$Shampoos_Added)
-standard_deviation_shampoos <- sd(df$Shampoos_Added)
+# Diagnostic tests - Normality
+shapiro.test(resid(fit))
+ks.test(resid(fit), "pnorm")
+qqnorm(resid(fit))
+qqline(resid(fit))
 
+# Diagnostic tests - Homogeneity of variances
+leveneTest(Shampoos_Added ~ Variant_ID, data=df)
 
-effect_time <- function(level) {
-  switch(level, 'a' = 0, 'b' = 1)
-}
-
-effect_shampoos <- function(level) {
-  switch(level, 'a' = 0, 'b' = 0.5)
-}
-
-# The model is: time ~ effect(factor) + N(grand_average, standard_deviation)
-distr_group_a_time <- replicate(nreplications, 
-                                (mean(effect_time('a') + rnorm(nsample, mean = grand_average_time, sd = standard_deviation_time))) -
-                                  (mean(effect_time('a') + rnorm(nsample, mean = grand_average_time, sd = standard_deviation_time))))
-distr_group_b_time <- replicate(nreplications, 
-                                (mean(effect_time('b') + rnorm(nsample, mean = grand_average_time, sd = standard_deviation_time))) -
-                                  (mean(effect_time('a') + rnorm(nsample, mean = grand_average_time, sd = standard_deviation_time))))
-
-distr_group_a_shampoos <- replicate(nreplications, 
-                                    (mean(effect_shampoos('a') + rnorm(nsample, mean = grand_average_shampoos, sd = standard_deviation_shampoos))) -
-                                      (mean(effect_shampoos('a') + rnorm(nsample, mean = grand_average_shampoos, sd = standard_deviation_shampoos))))
-distr_group_b_shampoos <- replicate(nreplications, 
-                                    (mean(effect_shampoos('b') + rnorm(nsample, mean = grand_average_shampoos, sd = standard_deviation_shampoos))) -
-                                      (mean(effect_shampoos('a') + rnorm(nsample, mean = grand_average_shampoos, sd = standard_deviation_shampoos))))
-
-# Plot the distributions
-plot(density(distr_group_a_time), xlim = c(-1, 2), ylim = c(0, 1), col = "blue", main = "", xlab = "")
-par(new=TRUE)
-plot(density(distr_group_b_time), xlim = c(-1, 2), ylim = c(0, 1), col = "red", main = "", xlab = "")
-par(new=TRUE)
-
-plot(density(distr_group_a_shampoos), xlim = c(-1, 2), ylim = c(0, 1), col = "blue", main = "", xlab = "")
-par(new=TRUE)
-plot(density(distr_group_b_shampoos), xlim = c(-1, 2), ylim = c(0, 1), col = "red", main = "", xlab = "")
-par(new=TRUE)
-
-# Power analysis for Time variable
-critical_value_time <- quantile(distr_group_a_time, 0.95)
-abline(v=critical_value_time, col = "green")
-
-beta_time <- length(distr_group_b_time[distr_group_b_time <= critical_value_time]) / length(distr_group_b_time)
-cat("Beta for Time variable:", beta_time, "\n")
-cat(paste("Time - 95% percentile (alpha): ", critical_value <- quantile(distr_group_a_time, 0.95), "\n", sep=''))
-
-# Power analysis for Shampoos_Added variable
-abline(v=critical_value, col = "green")
-
-beta_shampoos <- length(distr_group_b_shampoos[distr_group_b_shampoos <= critical_value_shampoos]) / length(distr_group_b_shampoos)
-cat("Beta for Shampoos_Added variable:", beta_shampoos, "\n")
-cat(paste("Shampoos Added - 95% percentile (alpha): ", critical_value <- quantile(distr_group_a_shampoos, 0.95), "\n", sep=''))
-
-
-########################################### New Power
-
-
+# Effect Size
+# eta_squared(fit) Deprecated
 
 ########################################### Run App
 
